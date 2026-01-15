@@ -4,20 +4,18 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Presently - Presentation Builder</title>
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- React & ReactDOM -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <!-- Babel for JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Lucide Icon Library -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
         body { font-family: 'Inter', sans-serif; }
         [contenteditable]:focus { outline: none; }
         .slide-aspect { aspect-ratio: 16 / 9; }
+        .animate-fade { animation: fadeIn 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     </style>
 </head>
 <body class="bg-slate-50">
@@ -28,9 +26,8 @@
         import { getAuth, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
         import { getFirestore, doc, onSnapshot, collection, query, addDoc, updateDoc, deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
 
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useRef } = React;
 
-        // --- Firebase Configuration ---
         const firebaseConfig = {
             apiKey: "AIzaSyDYI4Avd42wjJa3YOSKuGHhSCGgLFLZvik",
             authDomain: "presently-3babd.firebaseapp.com",
@@ -45,7 +42,6 @@
         const db = getFirestore(app);
         const appId = 'presently-default';
 
-        // --- Icon Component for Lucide ---
         const Icon = ({ name, size = 20, className = "" }) => {
             useEffect(() => {
                 if (window.lucide) window.lucide.createIcons();
@@ -53,37 +49,13 @@
             return <i data-lucide={name} style={{ width: size, height: size }} className={`inline-block ${className}`}></i>;
         };
 
-        const AuthWrapper = ({ children, title, subtitle }) => (
-            <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-                <div className="max-w-md w-full bg-white rounded-2xl shadow-xl overflow-hidden flex flex-col md:flex-row md:max-w-4xl animate-in fade-in zoom-in duration-300">
-                    <div className="hidden md:flex md:w-1/2 bg-orange-600 p-12 text-white flex-col justify-between">
-                        <div>
-                            <div className="flex items-center gap-2 mb-8">
-                                <Icon name="presentation" size={32} />
-                                <span className="text-2xl font-bold tracking-tight">Presently</span>
-                            </div>
-                            <h1 className="text-4xl font-extrabold leading-tight mb-4">Bring your ideas to life.</h1>
-                            <p className="text-orange-100 text-lg">The most intuitive way to build, share, and present your stories.</p>
-                        </div>
-                        <div className="text-sm text-orange-200">© 2024 Presently Inc.</div>
-                    </div>
-                    <div className="w-full md:w-1/2 p-8 md:p-12">
-                        <h2 className="text-2xl font-bold text-slate-800 mb-2">{title}</h2>
-                        <p className="text-slate-500 mb-8">{subtitle}</p>
-                        {children}
-                    </div>
-                </div>
-            </div>
-        );
-
         const App = () => {
             const [user, setUser] = useState(null);
             const [view, setView] = useState('loading');
-            const [fullName, setFullName] = useState('');
             const [email, setEmail] = useState('');
             const [password, setPassword] = useState('');
+            const [fullName, setFullName] = useState('');
             const [error, setError] = useState('');
-            
             const [presentations, setPresentations] = useState([]);
             const [activePres, setActivePres] = useState(null);
             const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
@@ -101,50 +73,58 @@
                 if (!user) return;
                 const q = query(collection(db, 'artifacts', appId, 'users', user.uid, 'presentations'));
                 const unsubscribe = onSnapshot(q, (snapshot) => {
-                    const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-                    setPresentations(docs);
-                }, (err) => console.error("Firestore error", err));
+                    setPresentations(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+                }, (err) => console.error("Firestore sync error", err));
                 return () => unsubscribe();
             }, [user]);
-
-            const validateInputs = () => {
-                if (!email.includes('@') || email.length < 5) return "Please enter a valid email address.";
-                if (password.length < 6) return "Password must be at least 6 characters.";
-                return null;
-            };
 
             const handleAuthSubmit = async (e) => {
                 e.preventDefault();
                 setError('');
-                const validationError = validateInputs();
-                if (validationError) {
-                    setError(validationError);
+
+                // Validation Logic
+                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                const fakeDomains = ['test.com', 'example.com', 'fake.com', 'temp.com'];
+                const isFakeEmail = fakeDomains.some(domain => email.toLowerCase().endsWith(domain));
+
+                if (!emailRegex.test(email)) {
+                    setError("Please enter a valid email format.");
                     return;
                 }
-                
-                // For preview purposes, we use anonymous auth. 
-                // In production, you would use createUserWithEmailAndPassword here.
+                if (isFakeEmail) {
+                    setError("Fake or temporary email domains are not allowed.");
+                    return;
+                }
+                if (password.length < 6) {
+                    setError("Password must be at least 6 characters.");
+                    return;
+                }
+                if (password.toLowerCase() === 'password' || password === '123456') {
+                    setError("This password is too common and not secure.");
+                    return;
+                }
+
                 try {
+                    // Using signInAnonymously as a fallback if custom email auth isn't setup
+                    // This creates a session for the user so they can use the app
                     await signInAnonymously(auth);
                 } catch (err) {
-                    setError("Authentication failed. Please try again.");
+                    console.error(err);
+                    setError("Login failed. Check if Anonymous Auth is enabled in Firebase Console.");
                 }
             };
 
             const createNewPresentation = async () => {
                 if (!user) return;
                 const newDoc = {
-                    title: "Untitled Presentation",
+                    title: "New Presentation",
                     createdAt: serverTimestamp(),
-                    ownerId: user.uid,
-                    slides: [
-                        { 
-                            elements: [
-                                { id: '1', type: 'text', content: 'Double click to edit title', x: 20, y: 30, fontSize: 40, bold: true },
-                                { id: '2', type: 'text', content: 'Add a subtitle here', x: 30, y: 50, fontSize: 20 }
-                            ] 
-                        }
-                    ]
+                    slides: [{ 
+                        elements: [
+                            { id: '1', type: 'text', content: 'Click to edit title', x: 20, y: 30, fontSize: 40, bold: true },
+                            { id: '2', type: 'text', content: 'Add subtitle', x: 20, y: 50, fontSize: 20 }
+                        ] 
+                    }]
                 };
                 const docRef = await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'presentations'), newDoc);
                 openPresentation({ id: docRef.id, ...newDoc });
@@ -172,69 +152,98 @@
 
             const addElement = (type) => {
                 const updated = { ...activePres };
-                const newElement = {
+                updated.slides[currentSlideIndex].elements.push({
                     id: Math.random().toString(36).substr(2, 9),
                     type,
                     content: type === 'text' ? 'New Text' : '',
                     x: 40, y: 40,
-                    width: type === 'shape' ? 100 : 'auto',
-                    height: type === 'shape' ? 100 : 'auto',
                     fontSize: type === 'text' ? 24 : undefined
-                };
-                updated.slides[currentSlideIndex].elements.push(newElement);
+                });
                 setActivePres(updated);
                 saveActivePres(updated);
             };
 
-            if (view === 'loading') return <div className="h-screen flex items-center justify-center font-bold text-slate-400">Loading...</div>;
+            if (view === 'loading') return <div className="h-screen flex items-center justify-center text-slate-400 font-medium">Connecting...</div>;
 
             if (view === 'login' || view === 'signup') {
                 const isLogin = view === 'login';
                 return (
-                    <AuthWrapper title={isLogin ? "Welcome back" : "Create an account"} subtitle="Save your work across devices.">
-                        <form onSubmit={handleAuthSubmit} className="space-y-5">
-                            {error && <div className="p-3 bg-red-50 text-red-500 text-sm rounded-lg border border-red-100">{error}</div>}
-                            {!isLogin && (
-                                <input type="text" placeholder="Full Name" className="w-full px-4 py-3 rounded-lg border outline-none focus:ring-2 focus:ring-orange-500" value={fullName} onChange={e => setFullName(e.target.value)} />
-                            )}
-                            <input 
-                                type="email" 
-                                placeholder="Email Address" 
-                                maxLength={100}
-                                className="w-full px-4 py-3 rounded-lg border outline-none focus:ring-2 focus:ring-orange-500" 
-                                value={email} 
-                                onChange={e => setEmail(e.target.value)} 
-                                required
-                            />
-                            <input 
-                                type="password" 
-                                placeholder="Password" 
-                                maxLength={15}
-                                className="w-full px-4 py-3 rounded-lg border outline-none focus:ring-2 focus:ring-orange-500" 
-                                value={password} 
-                                onChange={e => setPassword(e.target.value)} 
-                                required
-                            />
-                            <button type="submit" className="w-full bg-orange-600 text-white font-bold py-3 rounded-lg hover:bg-orange-700 transition-all shadow-lg active:scale-[0.98]">
-                                {isLogin ? "Sign In" : "Get Started"}
-                            </button>
-                        </form>
-                        <div className="mt-8 pt-8 border-t text-center">
-                            <button onClick={() => { setView(isLogin ? 'signup' : 'login'); setError(''); }} className="text-orange-600 font-semibold">{isLogin ? "Sign up for free" : "Log in"}</button>
+                    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+                        <div className="max-w-4xl w-full bg-white rounded-3xl shadow-2xl flex overflow-hidden animate-fade">
+                            <div className="hidden md:flex w-1/2 bg-orange-600 p-12 text-white flex-col justify-between">
+                                <div>
+                                    <div className="flex items-center gap-3 mb-10">
+                                        <Icon name="presentation" size={32} />
+                                        <span className="text-2xl font-extrabold tracking-tight">Presently</span>
+                                    </div>
+                                    <h1 className="text-4xl font-extrabold leading-tight mb-4">Design better, faster.</h1>
+                                    <p className="text-orange-100 text-lg opacity-90">Your all-in-one platform for professional presentations.</p>
+                                </div>
+                                <p className="text-sm opacity-60">© 2024 Presently Studio</p>
+                            </div>
+                            <div className="w-full md:w-1/2 p-12">
+                                <h2 className="text-2xl font-bold text-slate-800 mb-2">{isLogin ? "Welcome back" : "Join Presently"}</h2>
+                                <p className="text-slate-500 mb-8">Enter your details to access your dashboard.</p>
+                                
+                                <form onSubmit={handleAuthSubmit} className="space-y-4">
+                                    {error && <div className="p-3 bg-red-50 text-red-600 text-xs font-semibold rounded-lg border border-red-100">{error}</div>}
+                                    
+                                    {!isLogin && (
+                                        <input type="text" placeholder="Full Name" className="w-full px-4 py-3 rounded-xl border outline-none focus:ring-2 focus:ring-orange-500" value={fullName} onChange={e => setFullName(e.target.value)} />
+                                    )}
+                                    
+                                    <div className="space-y-1">
+                                        <input 
+                                            type="email" 
+                                            placeholder="Email Address" 
+                                            maxLength={100}
+                                            className="w-full px-4 py-3 rounded-xl border outline-none focus:ring-2 focus:ring-orange-500 transition-all" 
+                                            value={email} 
+                                            onChange={e => setEmail(e.target.value)} 
+                                            required 
+                                        />
+                                        <p className="text-[10px] text-slate-400 text-right">{email.length}/100</p>
+                                    </div>
+
+                                    <div className="space-y-1">
+                                        <input 
+                                            type="password" 
+                                            placeholder="Password" 
+                                            maxLength={15}
+                                            className="w-full px-4 py-3 rounded-xl border outline-none focus:ring-2 focus:ring-orange-500 transition-all" 
+                                            value={password} 
+                                            onChange={e => setPassword(e.target.value)} 
+                                            required 
+                                        />
+                                        <p className="text-[10px] text-slate-400 text-right">{password.length}/15</p>
+                                    </div>
+
+                                    <button type="submit" className="w-full bg-slate-900 text-white font-bold py-3.5 rounded-xl hover:bg-slate-800 transition-all shadow-lg active:scale-[0.98]">
+                                        {isLogin ? "Sign In" : "Create Account"}
+                                    </button>
+                                </form>
+                                
+                                <button 
+                                    onClick={() => { setView(isLogin ? 'signup' : 'login'); setError(''); }} 
+                                    className="w-full mt-6 text-slate-500 text-sm font-medium hover:text-orange-600 transition-colors"
+                                >
+                                    {isLogin ? "Don't have an account? Sign up" : "Already have an account? Log in"}
+                                </button>
+                            </div>
                         </div>
-                    </AuthWrapper>
+                    </div>
                 );
             }
 
             if (view === 'editor' && activePres) {
                 const currentSlide = activePres.slides[currentSlideIndex];
                 return (
-                    <div className="h-screen bg-slate-100 flex flex-col animate-in fade-in duration-300">
-                        <header className="bg-white border-b px-4 h-14 flex items-center justify-between z-20">
-                            <div className="flex items-center gap-4">
-                                <button onClick={() => setView('home')} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500"><Icon name="chevron-left" /></button>
+                    <div className="h-screen bg-slate-100 flex flex-col animate-fade">
+                        <header className="bg-white border-b px-6 h-16 flex items-center justify-between z-20">
+                            <div className="flex items-center gap-6">
+                                <button onClick={() => setView('home')} className="p-2 hover:bg-slate-100 rounded-full transition-colors"><Icon name="chevron-left" /></button>
                                 <div className="flex items-center gap-2">
-                                    <Icon name="presentation" size={18} className="text-orange-600" />
+                                    <Icon name="presentation" className="text-orange-600" />
                                     <input 
                                         type="text" 
                                         value={activePres.title} 
@@ -243,66 +252,56 @@
                                             setActivePres(updated);
                                             saveActivePres(updated);
                                         }}
-                                        className="font-semibold text-slate-800 outline-none border-b border-transparent focus:border-orange-500 px-1"
+                                        className="font-bold text-slate-800 outline-none border-b-2 border-transparent focus:border-orange-500 px-1"
                                     />
                                 </div>
                             </div>
-                            <button className="bg-orange-600 text-white px-4 py-1.5 rounded-lg text-sm font-bold flex items-center gap-2 shadow-sm"><Icon name="play" size={18} /> Present</button>
+                            <button className="bg-orange-600 text-white px-5 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-orange-700 shadow-md transition-all"><Icon name="play" size={16} /> Present</button>
                         </header>
 
-                        <div className="bg-white border-b px-4 py-2 flex items-center gap-4 z-10 shadow-sm">
-                            <button onClick={addSlide} className="flex flex-col items-center p-2 hover:bg-slate-100 rounded text-slate-600 group">
-                                <Icon name="plus" size={20} /> <span className="text-[10px] font-bold text-slate-400 group-hover:text-slate-600 uppercase">New Slide</span>
+                        <div className="bg-white border-b px-6 py-2 flex items-center gap-6 z-10">
+                            <button onClick={addSlide} className="flex flex-col items-center gap-1 p-2 hover:bg-slate-50 rounded-lg group">
+                                <Icon name="plus" size={18} className="text-slate-600" /> <span className="text-[10px] font-bold text-slate-400 group-hover:text-slate-600">NEW SLIDE</span>
                             </button>
-                            <div className="h-8 w-px bg-slate-200" />
-                            <button onClick={() => addElement('text')} className="flex flex-col items-center p-2 hover:bg-slate-100 rounded text-slate-600">
-                                <Icon name="type" size={20} /> <span className="text-[10px] font-bold text-slate-400 uppercase">Text</span>
+                            <div className="h-10 w-px bg-slate-200" />
+                            <button onClick={() => addElement('text')} className="flex flex-col items-center gap-1 p-2 hover:bg-slate-50 rounded-lg group">
+                                <Icon name="type" size={18} className="text-slate-600" /> <span className="text-[10px] font-bold text-slate-400 group-hover:text-slate-600">TEXT</span>
                             </button>
-                            <button onClick={() => addElement('square')} className="flex flex-col items-center p-2 hover:bg-slate-100 rounded text-slate-600">
-                                <Icon name="square" size={20} /> <span className="text-[10px] font-bold text-slate-400 uppercase">Shape</span>
+                            <button onClick={() => addElement('square')} className="flex flex-col items-center gap-1 p-2 hover:bg-slate-50 rounded-lg group">
+                                <Icon name="square" size={18} className="text-slate-600" /> <span className="text-[10px] font-bold text-slate-400 group-hover:text-slate-600">SHAPE</span>
                             </button>
                         </div>
 
                         <div className="flex-1 flex overflow-hidden">
-                            <aside className="w-48 bg-white border-r overflow-y-auto p-4 flex flex-col gap-4">
+                            <aside className="w-56 bg-white border-r overflow-y-auto p-4 flex flex-col gap-4 shadow-inner">
                                 {activePres.slides.map((slide, idx) => (
-                                    <div 
-                                        key={idx} 
-                                        onClick={() => setCurrentSlideIndex(idx)}
-                                        className={`relative cursor-pointer rounded-lg p-1 transition-all ${currentSlideIndex === idx ? 'ring-2 ring-orange-500 shadow-md' : 'hover:bg-slate-50'}`}
-                                    >
-                                        <div className="slide-aspect bg-slate-50 border rounded flex items-center justify-center text-[10px] text-slate-400 font-bold uppercase">
-                                            Slide {idx + 1}
+                                    <div key={idx} onClick={() => setCurrentSlideIndex(idx)} className={`group relative cursor-pointer rounded-xl p-1 transition-all ${currentSlideIndex === idx ? 'ring-2 ring-orange-500 shadow-lg' : 'hover:bg-slate-50'}`}>
+                                        <div className="slide-aspect bg-slate-50 border rounded-lg flex items-center justify-center font-bold text-slate-200">
+                                            {idx + 1}
                                         </div>
                                     </div>
                                 ))}
                             </aside>
 
-                            <main className="flex-1 bg-slate-100 p-12 flex items-center justify-center">
-                                <div className="w-full max-w-4xl slide-aspect bg-white shadow-2xl relative border overflow-hidden">
+                            <main className="flex-1 bg-slate-100 p-12 flex items-center justify-center overflow-auto">
+                                <div className="w-full max-w-4xl slide-aspect bg-white shadow-[0_20px_50px_rgba(0,0,0,0.1)] relative border border-slate-200 overflow-hidden rounded-sm">
                                     {currentSlide.elements.map((el) => (
-                                        <div 
-                                            key={el.id}
-                                            style={{ left: `${el.x}%`, top: `${el.y}%`, fontSize: el.fontSize ? `${el.fontSize}px` : 'inherit' }}
-                                            className="absolute cursor-move group"
-                                        >
+                                        <div key={el.id} style={{ left: `${el.x}%`, top: `${el.y}%`, fontSize: el.fontSize ? `${el.fontSize}px` : 'inherit' }} className="absolute">
                                             {el.type === 'text' && (
                                                 <div 
-                                                    contentEditable 
-                                                    suppressContentEditableWarning
+                                                    contentEditable suppressContentEditableWarning
                                                     onBlur={(e) => {
                                                         const updated = {...activePres};
-                                                        const element = updated.slides[currentSlideIndex].elements.find(item => item.id === el.id);
-                                                        element.content = e.target.innerText;
+                                                        updated.slides[currentSlideIndex].elements.find(item => item.id === el.id).content = e.target.innerText;
                                                         setActivePres(updated);
                                                         saveActivePres(updated);
                                                     }}
-                                                    className={`outline-none min-w-[50px] p-2 hover:ring-1 hover:ring-orange-200 rounded ${el.bold ? 'font-bold' : ''}`}
+                                                    className={`outline-none p-2 min-w-[100px] border border-transparent hover:border-orange-300 rounded cursor-text ${el.bold ? 'font-bold' : ''}`}
                                                 >
                                                     {el.content}
                                                 </div>
                                             )}
-                                            {el.type === 'square' && <div className="w-24 h-24 bg-orange-100 border-2 border-orange-300 rounded-md shadow-sm" />}
+                                            {el.type === 'square' && <div className="w-24 h-24 bg-orange-100 border-2 border-orange-200 rounded-lg shadow-sm" />}
                                         </div>
                                     ))}
                                 </div>
@@ -313,65 +312,81 @@
             }
 
             return (
-                <div className="min-h-screen bg-slate-50 flex animate-in fade-in duration-500">
-                    <aside className="w-64 bg-white border-r hidden lg:flex flex-col">
-                        <div className="p-6">
-                            <div className="flex items-center gap-2 text-orange-600 mb-8 font-bold text-xl"><Icon name="presentation" size={28} /> Presently</div>
-                            <nav className="space-y-1">
-                                <button className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium bg-orange-50 text-orange-600"><Icon name="layout" /> Home</button>
-                                <button className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50"><Icon name="settings" /> Settings</button>
-                            </nav>
+                <div className="min-h-screen bg-slate-50 flex animate-fade">
+                    <aside className="w-72 bg-white border-r hidden lg:flex flex-col p-8">
+                        <div className="flex items-center gap-3 text-orange-600 mb-12 font-extrabold text-2xl tracking-tighter">
+                            <Icon name="presentation" size={32} /> Presently
                         </div>
-                        <div className="mt-auto p-6 border-t flex items-center gap-3">
-                            <div className="h-10 w-10 bg-orange-100 text-orange-600 flex items-center justify-center rounded-full font-bold">{(fullName || user?.uid || 'U')[0].toUpperCase()}</div>
-                            <div className="flex-1 overflow-hidden">
-                                <p className="text-sm font-semibold truncate">{fullName || 'Anonym User'}</p>
+                        <nav className="space-y-2 flex-1">
+                            <button className="w-full flex items-center gap-4 px-4 py-3 rounded-xl text-sm font-bold bg-orange-50 text-orange-600"><Icon name="layout" /> Dashboard</button>
+                            <button className="w-full flex items-center gap-4 px-4 py-3 rounded-xl text-sm font-bold text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-all"><Icon name="settings" /> Settings</button>
+                        </nav>
+                        <div className="pt-8 border-t flex items-center gap-4">
+                            <div className="h-11 w-11 bg-orange-100 text-orange-600 flex items-center justify-center rounded-2xl font-bold shadow-sm">
+                                {(email || 'U')[0].toUpperCase()}
                             </div>
-                            <button onClick={() => signOut(auth)} className="text-slate-400 hover:text-slate-600"><Icon name="log-out" size={18} /></button>
+                            <div className="flex-1 overflow-hidden">
+                                <p className="text-sm font-bold text-slate-800 truncate">{email.split('@')[0]}</p>
+                                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Free Plan</p>
+                            </div>
+                            <button onClick={() => signOut(auth)} className="text-slate-300 hover:text-red-500 transition-colors"><Icon name="log-out" size={20} /></button>
                         </div>
                     </aside>
 
                     <div className="flex-1 flex flex-col h-screen overflow-hidden">
-                        <header className="bg-white border-b px-8 py-4 flex items-center justify-between">
-                            <div className="relative w-full max-w-lg">
-                                <Icon name="search" size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                                <input type="text" placeholder="Search presentations..." className="w-full pl-10 pr-4 py-2 bg-slate-100 rounded-lg text-sm outline-none focus:ring-2 focus:ring-orange-200 transition-all" />
+                        <header className="bg-white/80 backdrop-blur-md border-b px-10 py-5 flex items-center justify-between sticky top-0 z-10">
+                            <div className="relative w-full max-w-xl">
+                                <Icon name="search" size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                                <input type="text" placeholder="Find a project..." className="w-full pl-12 pr-4 py-3 bg-slate-100 border-transparent border focus:bg-white focus:border-slate-200 rounded-2xl text-sm outline-none transition-all" />
                             </div>
-                            <button onClick={createNewPresentation} className="bg-orange-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-sm hover:bg-orange-700 transition-all active:scale-95"><Icon name="plus" size={18} /> New Presentation</button>
+                            <button onClick={createNewPresentation} className="bg-orange-600 text-white px-6 py-3 rounded-2xl text-sm font-bold flex items-center gap-3 shadow-lg hover:bg-orange-700 transition-all active:scale-95">
+                                <Icon name="plus" size={20} /> New Presentation
+                            </button>
                         </header>
 
-                        <main className="flex-1 overflow-y-auto p-8">
+                        <main className="flex-1 overflow-y-auto p-10">
                             <div className="max-w-6xl mx-auto">
-                                <div className="mb-12">
-                                    <h2 className="text-xl font-bold text-slate-800 mb-6">Start with a template</h2>
-                                    <div onClick={createNewPresentation} className="w-48 group cursor-pointer">
-                                        <div className="aspect-[4/3] bg-white border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center gap-2 hover:border-orange-400 hover:bg-orange-50 transition-all active:scale-95">
-                                            <Icon name="plus" size={32} className="text-slate-400 group-hover:text-orange-600" />
-                                            <span className="text-xs font-semibold text-slate-500">Blank</span>
+                                <div className="mb-14">
+                                    <h2 className="text-xl font-black text-slate-800 mb-8 tracking-tight">Create something new</h2>
+                                    <div onClick={createNewPresentation} className="w-52 group cursor-pointer">
+                                        <div className="aspect-[4/3] bg-white border-2 border-dashed border-slate-200 rounded-3xl flex flex-col items-center justify-center gap-3 group-hover:border-orange-500 group-hover:bg-orange-50 transition-all shadow-sm">
+                                            <div className="p-3 bg-slate-50 group-hover:bg-white rounded-2xl transition-all">
+                                                <Icon name="plus" size={32} className="text-slate-400 group-hover:text-orange-600" />
+                                            </div>
+                                            <span className="text-xs font-black text-slate-400 group-hover:text-orange-600 uppercase tracking-widest">Blank Project</span>
                                         </div>
                                     </div>
                                 </div>
 
-                                <h2 className="text-xl font-bold text-slate-800 mb-6">Your Recent Presentations</h2>
+                                <div className="flex items-center justify-between mb-8">
+                                    <h2 className="text-xl font-black text-slate-800 tracking-tight">Recent Projects</h2>
+                                    <span className="text-xs font-bold text-slate-400 bg-slate-100 px-3 py-1 rounded-full">{presentations.length} Total</span>
+                                </div>
+
                                 {presentations.length === 0 ? (
-                                    <div className="bg-white rounded-xl border p-12 flex flex-col items-center text-center shadow-sm">
-                                        <Icon name="file-text" size={40} className="text-slate-200 mb-4" />
-                                        <h3 className="text-lg font-semibold text-slate-800">No presentations yet</h3>
-                                        <p className="text-slate-400 text-sm mt-1">Click the button above to start your first project.</p>
+                                    <div className="bg-white rounded-[2rem] border-2 border-dashed p-16 flex flex-col items-center text-center shadow-sm">
+                                        <div className="h-20 w-20 bg-slate-50 rounded-3xl flex items-center justify-center mb-6">
+                                            <Icon name="file-text" size={40} className="text-slate-200" />
+                                        </div>
+                                        <h3 className="text-xl font-black text-slate-800">No slides yet</h3>
+                                        <p className="text-slate-400 text-sm mt-2 max-w-xs">Your workspace is clean. Create your first presentation to get started.</p>
                                     </div>
                                 ) : (
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
                                         {presentations.map(p => (
-                                            <div key={p.id} onClick={() => openPresentation(p)} className="bg-white border rounded-xl p-4 cursor-pointer hover:shadow-lg transition-all group animate-in slide-in-from-bottom-4 duration-300">
-                                                <div className="slide-aspect bg-slate-50 rounded-lg mb-4 flex items-center justify-center text-orange-200 group-hover:bg-orange-50 transition-colors">
-                                                    <Icon name="presentation" size={48} />
+                                            <div key={p.id} onClick={() => openPresentation(p)} className="bg-white border border-slate-100 rounded-[2rem] p-5 cursor-pointer hover:shadow-2xl transition-all group animate-fade shadow-sm">
+                                                <div className="slide-aspect bg-slate-50 rounded-2xl mb-5 flex items-center justify-center text-orange-200 group-hover:bg-orange-50 transition-all border border-transparent group-hover:border-orange-100">
+                                                    <Icon name="presentation" size={56} />
                                                 </div>
-                                                <div className="flex items-center justify-between">
-                                                    <h3 className="font-semibold text-slate-800 truncate flex-1 mr-2">{p.title}</h3>
+                                                <div className="flex items-center justify-between px-2 pb-2">
+                                                    <div className="flex-1 min-w-0">
+                                                        <h3 className="font-bold text-slate-800 truncate text-lg">{p.title}</h3>
+                                                        <p className="text-[10px] text-slate-400 font-bold uppercase mt-0.5">Last edited 2m ago</p>
+                                                    </div>
                                                     <button onClick={(e) => {
                                                         e.stopPropagation();
                                                         deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'presentations', p.id));
-                                                    }} className="p-1 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded transition-colors"><Icon name="trash-2" size={16} /></button>
+                                                    }} className="h-10 w-10 flex items-center justify-center hover:bg-red-50 text-slate-300 hover:text-red-500 rounded-2xl transition-all"><Icon name="trash-2" size={18} /></button>
                                                 </div>
                                             </div>
                                         ))}
