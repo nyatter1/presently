@@ -11,13 +11,12 @@
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-        body { font-family: 'Inter', sans-serif; overflow: hidden; }
+        body { font-family: 'Inter', sans-serif; }
         [contenteditable]:focus { outline: none; }
         .slide-aspect { aspect-ratio: 16 / 9; }
         .animate-fade { animation: fadeIn 0.2s ease-out; }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-        .element-selected { outline: 2px solid #ea580c !important; }
-        .resize-handle { width: 10px; height: 10px; background: white; border: 2px solid #ea580c; position: absolute; border-radius: 50%; }
+        .selected-element { outline: 2px solid #ea580c !important; }
     </style>
 </head>
 <body class="bg-slate-50">
@@ -28,8 +27,9 @@
         import { getAuth, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
         import { getFirestore, doc, onSnapshot, collection, query, addDoc, updateDoc, deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
 
-        const { useState, useEffect, useRef, useCallback } = React;
+        const { useState, useEffect, useRef } = React;
 
+        // Configuration remains the same
         const firebaseConfig = {
             apiKey: "AIzaSyDYI4Avd42wjJa3YOSKuGHhSCGgLFLZvik",
             authDomain: "presently-3babd.firebaseapp.com",
@@ -61,8 +61,7 @@
             const [activePres, setActivePres] = useState(null);
             const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
             const [selectedElementId, setSelectedElementId] = useState(null);
-            const [isPresenting, setIsPresenting] = useState(false);
-            const [showNewSlideMenu, setShowNewSlideMenu] = useState(false);
+            const [showSlideModal, setShowSlideModal] = useState(false);
 
             useEffect(() => {
                 const unsubscribe = onAuthStateChanged(auth, (u) => {
@@ -78,18 +77,71 @@
                 const q = query(collection(db, 'artifacts', appId, 'users', user.uid, 'presentations'));
                 const unsubscribe = onSnapshot(q, (snapshot) => {
                     setPresentations(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-                }, (err) => console.error("Firestore sync error", err));
+                });
                 return () => unsubscribe();
             }, [user]);
 
             const handleAuthSubmit = async (e) => {
                 e.preventDefault();
-                setError('');
-                try {
-                    await signInAnonymously(auth);
-                } catch (err) {
-                    setError("Auth failed. Check Firebase console.");
+                try { await signInAnonymously(auth); } catch (err) { setError("Login failed."); }
+            };
+
+            const saveActivePres = async (updatedPres) => {
+                if (!user || !updatedPres?.id) return;
+                const { id, ...data } = updatedPres;
+                await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'presentations', id), data);
+            };
+
+            const addSlide = (type) => {
+                const updated = { ...activePres };
+                const newSlide = { elements: [] };
+                if (type === 'template') {
+                    newSlide.elements = [
+                        { id: Math.random().toString(36).substr(2, 9), type: 'text', content: 'Slide Title', x: 10, y: 15, fontSize: 48, color: '#1e293b', bold: true },
+                        { id: Math.random().toString(36).substr(2, 9), type: 'text', content: 'Click to add body text...', x: 10, y: 35, fontSize: 24, color: '#64748b' }
+                    ];
                 }
+                updated.slides.push(newSlide);
+                setActivePres(updated);
+                setCurrentSlideIndex(updated.slides.length - 1);
+                setShowSlideModal(false);
+                saveActivePres(updated);
+            };
+
+            const addElement = (type) => {
+                const updated = { ...activePres };
+                const newEl = {
+                    id: Math.random().toString(36).substr(2, 9),
+                    type,
+                    content: type === 'text' ? 'New Text' : '',
+                    x: 40, y: 40,
+                    fontSize: 24,
+                    color: type === 'text' ? '#000000' : '#ea580c'
+                };
+                updated.slides[currentSlideIndex].elements.push(newEl);
+                setActivePres(updated);
+                setSelectedElementId(newEl.id);
+                saveActivePres(updated);
+            };
+
+            const updateSelectedElement = (key, value) => {
+                if (!selectedElementId) return;
+                const updated = { ...activePres };
+                const el = updated.slides[currentSlideIndex].elements.find(e => e.id === selectedElementId);
+                if (el) {
+                    el[key] = value;
+                    setActivePres(updated);
+                    saveActivePres(updated);
+                }
+            };
+
+            const deleteSelectedElement = () => {
+                if (!selectedElementId) return;
+                const updated = { ...activePres };
+                updated.slides[currentSlideIndex].elements = updated.slides[currentSlideIndex].elements.filter(e => e.id !== selectedElementId);
+                setActivePres(updated);
+                setSelectedElementId(null);
+                saveActivePres(updated);
             };
 
             const createNewPresentation = async () => {
@@ -97,167 +149,26 @@
                 const newDoc = {
                     title: "Untitled Presentation",
                     createdAt: serverTimestamp(),
-                    slides: [{ 
-                        elements: [
-                            { id: '1', type: 'text', content: 'Double click to edit title', x: 10, y: 35, width: 80, height: 15, fontSize: 48, bold: true, color: '#1e293b' },
-                            { id: '2', type: 'text', content: 'Subtitle goes here', x: 10, y: 52, width: 80, height: 10, fontSize: 24, color: '#64748b' }
-                        ] 
-                    }]
+                    slides: [{ elements: [{ id: '1', type: 'text', content: 'Main Title', x: 25, y: 40, fontSize: 64, bold: true, color: '#1e293b' }] }]
                 };
                 const docRef = await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'presentations'), newDoc);
-                openPresentation({ id: docRef.id, ...newDoc });
-            };
-
-            const openPresentation = (pres) => {
-                setActivePres(pres);
-                setCurrentSlideIndex(0);
-                setSelectedElementId(null);
+                setActivePres({ id: docRef.id, ...newDoc });
                 setView('editor');
             };
 
-            const updateActivePres = (updated) => {
-                setActivePres(updated);
-                if (user && updated.id) {
-                    const { id, ...data } = updated;
-                    updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'presentations', id), data);
-                }
-            };
+            if (view === 'loading') return <div className="h-screen flex items-center justify-center text-slate-400">Connecting...</div>;
 
-            const addSlide = (type = 'blank') => {
-                const updated = { ...activePres };
-                const newSlide = { elements: [] };
-                if (type === 'template') {
-                    newSlide.elements = [
-                        { id: Math.random().toString(36).substr(2, 9), type: 'text', content: 'Slide Title', x: 5, y: 5, width: 90, height: 10, fontSize: 32, bold: true, color: '#1e293b' },
-                        { id: Math.random().toString(36).substr(2, 9), type: 'text', content: 'Add your content here...', x: 5, y: 20, width: 90, height: 60, fontSize: 18, color: '#334155' }
-                    ];
-                }
-                updated.slides.push(newSlide);
-                updateActivePres(updated);
-                setCurrentSlideIndex(updated.slides.length - 1);
-                setShowNewSlideMenu(false);
-            };
-
-            const deleteSlide = (idx) => {
-                if (activePres.slides.length <= 1) return;
-                const updated = { ...activePres };
-                updated.slides.splice(idx, 1);
-                const newIdx = Math.max(0, currentSlideIndex >= updated.slides.length ? updated.slides.length - 1 : currentSlideIndex);
-                setCurrentSlideIndex(newIdx);
-                updateActivePres(updated);
-            };
-
-            const addElement = (type) => {
-                const updated = { ...activePres };
-                const id = Math.random().toString(36).substr(2, 9);
-                const el = {
-                    id, type,
-                    x: 40, y: 40, width: type === 'text' ? 20 : 15, height: type === 'text' ? 10 : 15,
-                    content: type === 'text' ? 'New Text' : '',
-                    fontSize: type === 'text' ? 20 : undefined,
-                    color: type === 'text' ? '#1e293b' : '#fb923c',
-                    bold: false
-                };
-                updated.slides[currentSlideIndex].elements.push(el);
-                updateActivePres(updated);
-                setSelectedElementId(id);
-            };
-
-            const updateElement = (id, fields) => {
-                const updated = { ...activePres };
-                const slide = updated.slides[currentSlideIndex];
-                const elIdx = slide.elements.findIndex(el => el.id === id);
-                if (elIdx > -1) {
-                    slide.elements[elIdx] = { ...slide.elements[elIdx], ...fields };
-                    updateActivePres(updated);
-                }
-            };
-
-            const deleteElement = (id) => {
-                const updated = { ...activePres };
-                updated.slides[currentSlideIndex].elements = updated.slides[currentSlideIndex].elements.filter(el => el.id !== id);
-                updateActivePres(updated);
-                setSelectedElementId(null);
-            };
-
-            const handleElementDrag = (e, id) => {
-                const slideRect = e.currentTarget.closest('.slide-container').getBoundingClientRect();
-                const startX = e.clientX;
-                const startY = e.clientY;
-                const el = activePres.slides[currentSlideIndex].elements.find(i => i.id === id);
-                const initialX = el.x;
-                const initialY = el.y;
-
-                const onMove = (moveEvent) => {
-                    const dx = ((moveEvent.clientX - startX) / slideRect.width) * 100;
-                    const dy = ((moveEvent.clientY - startY) / slideRect.height) * 100;
-                    updateElement(id, { x: initialX + dx, y: initialY + dy });
-                };
-
-                const onUp = () => {
-                    window.removeEventListener('mousemove', onMove);
-                    window.removeEventListener('mouseup', onUp);
-                };
-
-                window.addEventListener('mousemove', onMove);
-                window.addEventListener('mouseup', onUp);
-            };
-
-            const handleElementResize = (e, id) => {
-                e.stopPropagation();
-                const slideRect = e.currentTarget.closest('.slide-container').getBoundingClientRect();
-                const startX = e.clientX;
-                const startY = e.clientY;
-                const el = activePres.slides[currentSlideIndex].elements.find(i => i.id === id);
-                const initialW = el.width;
-                const initialH = el.height;
-
-                const onMove = (moveEvent) => {
-                    const dw = ((moveEvent.clientX - startX) / slideRect.width) * 100;
-                    const dh = ((moveEvent.clientY - startY) / slideRect.height) * 100;
-                    updateElement(id, { width: Math.max(2, initialW + dw), height: Math.max(2, initialH + dh) });
-                };
-
-                const onUp = () => {
-                    window.removeEventListener('mousemove', onMove);
-                    window.removeEventListener('mouseup', onUp);
-                };
-
-                window.addEventListener('mousemove', onMove);
-                window.addEventListener('mouseup', onUp);
-            };
-
-            // Presentation Keyboard Listeners
-            useEffect(() => {
-                const handleKey = (e) => {
-                    if (isPresenting) {
-                        if (e.key === 'ArrowRight' || e.key === ' ') setCurrentSlideIndex(p => Math.min(p + 1, activePres.slides.length - 1));
-                        if (e.key === 'ArrowLeft') setCurrentSlideIndex(p => Math.max(p - 1, 0));
-                        if (e.key === 'Escape') setIsPresenting(false);
-                    } else if (selectedElementId && e.key === 'Delete') {
-                        deleteElement(selectedElementId);
-                    }
-                };
-                window.addEventListener('keydown', handleKey);
-                return () => window.removeEventListener('keydown', handleKey);
-            }, [isPresenting, activePres, selectedElementId]);
-
-            if (view === 'loading') return <div className="h-screen flex items-center justify-center text-slate-400 font-medium">Connecting...</div>;
-
-            if (view === 'login' || view === 'signup') {
+            if (view === 'login') {
                 return (
-                    <div className="min-h-screen flex items-center justify-center p-4 bg-slate-900">
-                        <div className="max-w-md w-full bg-white rounded-3xl p-10 shadow-2xl animate-fade">
-                            <div className="flex items-center gap-3 mb-8 text-orange-600">
-                                <Icon name="presentation" size={32} />
-                                <span className="text-2xl font-extrabold tracking-tight text-slate-900">Presently</span>
-                            </div>
-                            <h2 className="text-2xl font-bold text-slate-800 mb-6">Welcome back</h2>
+                    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
+                        <div className="bg-white p-10 rounded-3xl w-full max-w-md shadow-2xl">
+                            <h2 className="text-3xl font-black mb-6">Presently</h2>
                             <form onSubmit={handleAuthSubmit} className="space-y-4">
-                                <input type="email" placeholder="Email" className="w-full px-4 py-3 rounded-xl border outline-none focus:ring-2 focus:ring-orange-500" value={email} onChange={e => setEmail(e.target.value)} />
-                                <input type="password" placeholder="Password" className="w-full px-4 py-3 rounded-xl border outline-none focus:ring-2 focus:ring-orange-500" value={password} onChange={e => setPassword(e.target.value)} />
-                                <button type="submit" className="w-full bg-orange-600 text-white font-bold py-3.5 rounded-xl hover:bg-orange-700 transition-all">Sign In Anonymously</button>
+                                <input type="email" placeholder="Email" className="w-full p-3 border rounded-xl" onChange={e => setEmail(e.target.value)} />
+                                <input type="password" placeholder="Password" className="w-full p-3 border rounded-xl" onChange={e => setPassword(e.target.value)} />
+                                <button className="w-full bg-orange-600 text-white py-3 rounded-xl font-bold">Start Designing</button>
                             </form>
+                            <p className="mt-4 text-xs text-slate-400">Note: Anonymous login is enabled for testing.</p>
                         </div>
                     </div>
                 );
@@ -265,148 +176,93 @@
 
             if (view === 'editor' && activePres) {
                 const currentSlide = activePres.slides[currentSlideIndex];
-                const selectedElement = currentSlide.elements.find(el => el.id === selectedElementId);
+                const selectedEl = currentSlide.elements.find(e => e.id === selectedElementId);
 
                 return (
                     <div className="h-screen flex flex-col bg-slate-100 overflow-hidden">
-                        {/* Presentation Mode */}
-                        {isPresenting && (
-                            <div className="fixed inset-0 bg-black z-[100] flex items-center justify-center cursor-none group">
-                                <div className="w-full h-full flex items-center justify-center p-4">
-                                    <div className="w-full max-w-[90vw] slide-aspect bg-white relative overflow-hidden shadow-2xl">
-                                        {currentSlide.elements.map(el => (
-                                            <div key={el.id} style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.width}%`, height: `${el.height}%`, fontSize: el.fontSize ? `${(el.fontSize / 100) * 10}vw` : 'inherit', color: el.color }} className="absolute flex items-center">
-                                                {el.type === 'text' ? <div className={`${el.bold ? 'font-bold' : ''}`}>{el.content}</div> : 
-                                                 el.type === 'circle' ? <div className="w-full h-full rounded-full" style={{ backgroundColor: el.color }} /> :
-                                                 <div className="w-full h-full" style={{ backgroundColor: el.color }} />}
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-4 text-white/50 text-xs uppercase font-bold tracking-widest bg-black/40 px-4 py-2 rounded-full">
-                                    Slide {currentSlideIndex + 1} of {activePres.slides.length} • Esc to exit
-                                </div>
-                            </div>
-                        )}
-
-                        <header className="bg-white border-b px-6 h-14 flex items-center justify-between shrink-0">
+                        {/* Header */}
+                        <header className="h-14 bg-white border-b flex items-center justify-between px-4 shrink-0">
                             <div className="flex items-center gap-4">
-                                <button onClick={() => setView('home')} className="p-2 hover:bg-slate-100 rounded-lg"><Icon name="arrow-left" size={18} /></button>
-                                <input 
-                                    className="font-bold text-slate-800 bg-transparent outline-none focus:ring-1 focus:ring-orange-200 rounded px-2"
-                                    value={activePres.title}
-                                    onChange={(e) => updateActivePres({...activePres, title: e.target.value})}
-                                />
+                                <button onClick={() => setView('home')} className="p-2 hover:bg-slate-100 rounded-lg"><Icon name="arrow-left"/></button>
+                                <input className="font-bold outline-none border-b border-transparent focus:border-orange-500" value={activePres.title} onChange={e => {
+                                    const up = {...activePres, title: e.target.value};
+                                    setActivePres(up); saveActivePres(up);
+                                }} />
                             </div>
-                            <div className="flex items-center gap-2">
-                                <button onClick={() => setIsPresenting(true)} className="bg-orange-600 text-white px-4 py-1.5 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-orange-700 shadow-sm"><Icon name="play" size={14} /> Present</button>
-                            </div>
+                            <button className="bg-slate-900 text-white px-4 py-1.5 rounded-lg text-sm font-bold">Present</button>
                         </header>
 
-                        {/* Toolbar */}
-                        <div className="bg-white border-b px-6 py-2 flex items-center gap-4 shrink-0 overflow-x-auto">
-                            <div className="relative">
-                                <button onClick={() => setShowNewSlideMenu(!showNewSlideMenu)} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 border rounded-lg text-sm font-bold text-slate-600">
-                                    <Icon name="plus" size={16} /> Add Slide <Icon name="chevron-down" size={14} />
-                                </button>
-                                {showNewSlideMenu && (
-                                    <div className="absolute top-full left-0 mt-2 w-48 bg-white border rounded-xl shadow-xl z-50 p-2 animate-fade">
-                                        <button onClick={() => addSlide('blank')} className="w-full text-left px-4 py-2 hover:bg-slate-50 rounded-lg text-sm font-medium">Blank Slide</button>
-                                        <button onClick={() => addSlide('template')} className="w-full text-left px-4 py-2 hover:bg-slate-50 rounded-lg text-sm font-medium">Title & Content Template</button>
-                                    </div>
-                                )}
-                            </div>
+                        {/* Formatting Bar */}
+                        <div className="h-12 bg-white border-b flex items-center px-4 gap-4 shrink-0">
+                            <button onClick={() => setShowSlideModal(true)} className="flex items-center gap-1 text-xs font-bold text-orange-600 bg-orange-50 px-3 py-1.5 rounded-lg hover:bg-orange-100">
+                                <Icon name="plus" size={14}/> NEW SLIDE
+                            </button>
                             <div className="h-6 w-px bg-slate-200 mx-2" />
-                            <button onClick={() => addElement('text')} className="p-2 hover:bg-slate-50 rounded-lg flex flex-col items-center gap-1 group">
-                                <Icon name="type" size={18} className="text-slate-500 group-hover:text-orange-600" />
-                                <span className="text-[10px] text-slate-400 font-bold group-hover:text-slate-600">TEXT</span>
-                            </button>
-                            <button onClick={() => addElement('square')} className="p-2 hover:bg-slate-50 rounded-lg flex flex-col items-center gap-1 group">
-                                <Icon name="square" size={18} className="text-slate-500 group-hover:text-orange-600" />
-                                <span className="text-[10px] text-slate-400 font-bold group-hover:text-slate-600">SQUARE</span>
-                            </button>
-                            <button onClick={() => addElement('circle')} className="p-2 hover:bg-slate-50 rounded-lg flex flex-col items-center gap-1 group">
-                                <Icon name="circle" size={18} className="text-slate-500 group-hover:text-orange-600" />
-                                <span className="text-[10px] text-slate-400 font-bold group-hover:text-slate-600">CIRCLE</span>
-                            </button>
-
-                            {selectedElement && (
-                                <>
-                                    <div className="h-6 w-px bg-slate-200 mx-2" />
-                                    {selectedElement.type === 'text' && (
-                                        <div className="flex items-center gap-2">
-                                            <input type="number" className="w-16 border rounded px-2 py-1 text-sm outline-none focus:ring-1 focus:ring-orange-500" value={selectedElement.fontSize} onChange={(e) => updateElement(selectedElementId, { fontSize: parseInt(e.target.value) || 12 })} />
-                                            <button onClick={() => updateElement(selectedElementId, { bold: !selectedElement.bold })} className={`p-1.5 rounded ${selectedElement.bold ? 'bg-orange-100 text-orange-600' : 'hover:bg-slate-50'}`}><Icon name="bold" size={16} /></button>
-                                        </div>
+                            <button onClick={() => addElement('text')} className="p-2 hover:bg-slate-100 rounded-lg" title="Add Text"><Icon name="type" size={18}/></button>
+                            <button onClick={() => addElement('square')} className="p-2 hover:bg-slate-100 rounded-lg" title="Add Square"><Icon name="square" size={18}/></button>
+                            <button onClick={() => addElement('circle')} className="p-2 hover:bg-slate-100 rounded-lg" title="Add Circle"><Icon name="circle" size={18}/></button>
+                            
+                            {selectedEl && (
+                                <div className="flex items-center gap-3 ml-auto animate-fade">
+                                    {selectedEl.type === 'text' && (
+                                        <>
+                                            <input type="number" className="w-16 border rounded px-2 py-1 text-sm" value={selectedEl.fontSize} onChange={e => updateSelectedElement('fontSize', parseInt(e.target.value))} />
+                                            <input type="color" className="w-8 h-8 rounded cursor-pointer" value={selectedEl.color || '#000000'} onChange={e => updateSelectedElement('color', e.target.value)} />
+                                            <button onClick={() => updateSelectedElement('bold', !selectedEl.bold)} className={`p-2 rounded ${selectedEl.bold ? 'bg-orange-100 text-orange-600' : 'hover:bg-slate-100'}`}><Icon name="bold" size={16}/></button>
+                                        </>
                                     )}
-                                    <div className="flex items-center gap-1">
-                                        {['#1e293b', '#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899'].map(c => (
-                                            <button key={c} onClick={() => updateElement(selectedElementId, { color: c })} className={`w-5 h-5 rounded-full border border-black/10 transition-transform hover:scale-125 ${selectedElement.color === c ? 'ring-2 ring-white ring-offset-2 ring-offset-slate-400' : ''}`} style={{ backgroundColor: c }} />
-                                        ))}
-                                    </div>
-                                    <button onClick={() => deleteElement(selectedElementId)} className="ml-2 p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg"><Icon name="trash-2" size={18} /></button>
-                                </>
+                                    {selectedEl.type !== 'text' && (
+                                        <input type="color" className="w-8 h-8 rounded cursor-pointer" value={selectedEl.color || '#ea580c'} onChange={e => updateSelectedElement('color', e.target.value)} />
+                                    )}
+                                    <button onClick={deleteSelectedElement} className="p-2 hover:bg-red-50 text-red-500 rounded-lg"><Icon name="trash-2" size={18}/></button>
+                                </div>
                             )}
                         </div>
 
                         <div className="flex-1 flex overflow-hidden">
-                            {/* Slide Sorter */}
-                            <aside className="w-56 bg-white border-r overflow-y-auto p-4 flex flex-col gap-4 shadow-inner">
-                                {activePres.slides.map((slide, idx) => (
-                                    <div key={idx} className="relative group">
-                                        <div onClick={() => setCurrentSlideIndex(idx)} className={`w-full slide-aspect bg-slate-50 border rounded-xl overflow-hidden cursor-pointer transition-all ${currentSlideIndex === idx ? 'ring-2 ring-orange-500 shadow-md' : 'hover:bg-slate-100 border-slate-200'}`}>
-                                            <div className="w-full h-full scale-[0.2] origin-top-left relative">
-                                                {slide.elements.map(el => (
-                                                    <div key={el.id} style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.width}%`, height: `${el.height}%`, backgroundColor: el.type !== 'text' ? el.color : 'transparent', color: el.color, fontSize: `${el.fontSize}px` }} className={`absolute ${el.type === 'circle' ? 'rounded-full' : ''}`}>
-                                                        {el.type === 'text' && el.content}
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                        <div className="mt-1 flex justify-between items-center px-2">
-                                            <span className="text-[10px] font-bold text-slate-400">{idx + 1}</span>
-                                            <button onClick={(e) => { e.stopPropagation(); deleteSlide(idx); }} className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-500 transition-opacity"><Icon name="x" size={12} /></button>
-                                        </div>
+                            {/* Thumbnails */}
+                            <aside className="w-48 bg-white border-r overflow-y-auto p-4 space-y-4 shrink-0 shadow-inner">
+                                {activePres.slides.map((s, i) => (
+                                    <div key={i} onClick={() => {setCurrentSlideIndex(i); setSelectedElementId(null);}} className={`cursor-pointer rounded-lg overflow-hidden border-2 transition-all ${currentSlideIndex === i ? 'border-orange-500 ring-2 ring-orange-100' : 'border-slate-200 hover:border-slate-300'}`}>
+                                        <div className="slide-aspect bg-slate-50 flex items-center justify-center text-xs font-bold text-slate-400">{i + 1}</div>
                                     </div>
                                 ))}
                             </aside>
 
-                            {/* Main Stage */}
-                            <main className="flex-1 bg-slate-100 p-8 flex items-center justify-center overflow-auto scrollbar-hide" onClick={() => setSelectedElementId(null)}>
-                                <div className="slide-container w-full max-w-5xl slide-aspect bg-white shadow-[0_30px_60px_-15px_rgba(0,0,0,0.1)] relative border border-slate-200 rounded-sm overflow-hidden animate-fade">
-                                    {currentSlide.elements.map((el) => (
+                            {/* Canvas */}
+                            <main className="flex-1 p-12 flex items-center justify-center overflow-auto bg-slate-200" onClick={() => setSelectedElementId(null)}>
+                                <div className="w-full max-w-4xl slide-aspect bg-white shadow-2xl relative overflow-hidden" onClick={e => e.stopPropagation()}>
+                                    {currentSlide.elements.map(el => (
                                         <div 
                                             key={el.id} 
-                                            onMouseDown={(e) => { e.stopPropagation(); setSelectedElementId(el.id); handleElementDrag(e, el.id); }}
+                                            onClick={(e) => { e.stopPropagation(); setSelectedElementId(el.id); }}
                                             style={{ 
                                                 left: `${el.x}%`, 
                                                 top: `${el.y}%`, 
-                                                width: `${el.width}%`, 
-                                                height: `${el.height}%`, 
+                                                fontSize: `${el.fontSize}px`, 
                                                 color: el.color,
-                                                fontSize: el.fontSize ? `${el.fontSize}px` : 'inherit',
+                                                fontWeight: el.bold ? '800' : '400',
                                                 zIndex: selectedElementId === el.id ? 10 : 1
                                             }} 
-                                            className={`absolute cursor-move flex items-center group ${selectedElementId === el.id ? 'element-selected' : 'hover:outline hover:outline-1 hover:outline-slate-300'}`}
+                                            className={`absolute cursor-move p-2 transition-shadow ${selectedElementId === el.id ? 'selected-element shadow-xl' : 'hover:outline hover:outline-1 hover:outline-slate-300'}`}
                                         >
-                                            {el.type === 'text' && (
+                                            {el.type === 'text' ? (
                                                 <div 
-                                                    className={`w-full h-full outline-none p-2 ${el.bold ? 'font-bold' : ''}`}
                                                     contentEditable 
-                                                    suppressContentEditableWarning
-                                                    onInput={(e) => updateElement(el.id, { content: e.currentTarget.innerText })}
-                                                    onMouseDown={e => e.stopPropagation()}
+                                                    suppressContentEditableWarning 
+                                                    onBlur={e => {
+                                                        const up = {...activePres};
+                                                        up.slides[currentSlideIndex].elements.find(item => item.id === el.id).content = e.target.innerText;
+                                                        setActivePres(up); saveActivePres(up);
+                                                    }}
+                                                    className="min-w-[50px] outline-none"
                                                 >
                                                     {el.content}
                                                 </div>
-                                            )}
-                                            {el.type === 'square' && <div className="w-full h-full" style={{ backgroundColor: el.color }} />}
-                                            {el.type === 'circle' && <div className="w-full h-full rounded-full" style={{ backgroundColor: el.color }} />}
-                                            
-                                            {selectedElementId === el.id && (
+                                            ) : (
                                                 <div 
-                                                    className="resize-handle bottom-0 right-0 cursor-se-resize -mr-1 -mb-1"
-                                                    onMouseDown={(e) => handleElementResize(e, el.id)}
+                                                    style={{ backgroundColor: el.color || '#ea580c', borderRadius: el.type === 'circle' ? '50%' : '8px' }} 
+                                                    className="w-24 h-24 opacity-80" 
                                                 />
                                             )}
                                         </div>
@@ -414,71 +270,66 @@
                                 </div>
                             </main>
                         </div>
+
+                        {/* New Slide Modal */}
+                        {showSlideModal && (
+                            <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-6">
+                                <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl animate-fade">
+                                    <h3 className="text-xl font-black mb-6">Choose Slide Layout</h3>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <button onClick={() => addSlide('blank')} className="p-6 border-2 border-slate-100 rounded-2xl hover:border-orange-500 hover:bg-orange-50 transition-all flex flex-col items-center gap-3">
+                                            <div className="w-full aspect-video bg-slate-100 rounded border border-dashed border-slate-300"></div>
+                                            <span className="font-bold text-sm">Blank</span>
+                                        </button>
+                                        <button onClick={() => addSlide('template')} className="p-6 border-2 border-slate-100 rounded-2xl hover:border-orange-500 hover:bg-orange-50 transition-all flex flex-col items-center gap-3">
+                                            <div className="w-full aspect-video bg-slate-100 rounded p-2 flex flex-col gap-1">
+                                                <div className="h-2 w-3/4 bg-slate-300 rounded"></div>
+                                                <div className="h-1 w-1/2 bg-slate-200 rounded"></div>
+                                            </div>
+                                            <span className="font-bold text-sm">Template</span>
+                                        </button>
+                                    </div>
+                                    <button onClick={() => setShowSlideModal(false)} className="mt-6 w-full py-3 text-slate-400 font-bold hover:text-slate-600">Cancel</button>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 );
             }
 
+            // Dashboard View
             return (
-                <div className="min-h-screen bg-slate-50 flex animate-fade">
-                    <aside className="w-64 bg-slate-900 hidden lg:flex flex-col p-6 text-white shrink-0">
-                        <div className="flex items-center gap-3 text-orange-500 mb-12 font-black text-2xl italic tracking-tighter">
-                            <Icon name="presentation" size={32} /> Presently
+                <div className="min-h-screen flex w-full bg-slate-50">
+                    <aside className="w-64 bg-white border-r p-8 flex flex-col shrink-0">
+                        <div className="text-2xl font-black text-orange-600 mb-12 flex items-center gap-2">
+                             <Icon name="presentation" size={28}/> Presently
                         </div>
-                        <nav className="space-y-1 flex-1">
-                            <button className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold bg-white/10 text-white"><Icon name="layout" size={18} /> Projects</button>
-                            <button className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-slate-400 hover:bg-white/5 transition-all"><Icon name="shared-2" size={18} /> Shared</button>
-                            <button className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-slate-400 hover:bg-white/5 transition-all"><Icon name="trash" size={18} /> Trash</button>
-                        </nav>
-                        <div className="mt-auto pt-6 border-t border-white/10 flex items-center gap-3">
-                            <div className="h-10 w-10 bg-orange-600 rounded-full flex items-center justify-center font-bold">U</div>
-                            <div className="flex-1 min-w-0">
-                                <p className="text-sm font-bold truncate">User_{auth.currentUser?.uid.slice(0, 4)}</p>
-                                <button onClick={() => signOut(auth)} className="text-[10px] text-slate-400 font-bold hover:text-white uppercase tracking-widest">Logout</button>
-                            </div>
+                        <button className="flex items-center gap-3 bg-orange-600 text-white p-3 rounded-xl font-bold shadow-lg shadow-orange-200 hover:scale-105 transition-transform" onClick={createNewPresentation}>
+                            <Icon name="plus" size={20}/> New Project
+                        </button>
+                        <div className="mt-auto pt-4 border-t">
+                            <button onClick={() => signOut(auth)} className="text-slate-400 font-bold text-sm hover:text-red-500">Sign Out</button>
                         </div>
                     </aside>
-
-                    <div className="flex-1 flex flex-col h-screen overflow-hidden">
-                        <header className="px-10 py-6 flex items-center justify-between">
-                            <h1 className="text-2xl font-black text-slate-800 tracking-tight">Presentations</h1>
-                            <button onClick={createNewPresentation} className="bg-orange-600 text-white px-6 py-3 rounded-2xl text-sm font-bold flex items-center gap-2 shadow-lg hover:shadow-orange-500/20 hover:-translate-y-0.5 transition-all active:scale-95">
-                                <Icon name="plus" size={18} /> Create New
-                            </button>
-                        </header>
-
-                        <main className="flex-1 overflow-y-auto px-10 pb-10">
-                            {presentations.length === 0 ? (
-                                <div className="h-[60vh] flex flex-col items-center justify-center text-center opacity-50">
-                                    <Icon name="ghost" size={64} className="mb-4 text-slate-200" />
-                                    <p className="font-bold text-slate-400">Empty workspace</p>
-                                    <p className="text-sm text-slate-300">Start your first story today.</p>
+                    <main className="flex-1 p-12 overflow-y-auto">
+                        <h1 className="text-3xl font-black mb-8">Your Projects</h1>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {presentations.map(p => (
+                                <div key={p.id} onClick={() => {setActivePres(p); setView('editor');}} className="group bg-white p-4 rounded-3xl border border-slate-100 shadow-sm hover:shadow-xl transition-all cursor-pointer">
+                                    <div className="aspect-video bg-slate-50 rounded-2xl mb-4 flex items-center justify-center text-slate-200 group-hover:bg-orange-50 group-hover:text-orange-200 transition-colors">
+                                        <Icon name="presentation" size={48}/>
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                        <h3 className="font-bold text-slate-800 truncate pr-4">{p.title}</h3>
+                                        <button onClick={(e) => {
+                                            e.stopPropagation();
+                                            deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'presentations', p.id));
+                                        }} className="p-2 text-slate-300 hover:text-red-500"><Icon name="trash-2" size={16}/></button>
+                                    </div>
                                 </div>
-                            ) : (
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
-                                    {presentations.map(p => (
-                                        <div key={p.id} onClick={() => openPresentation(p)} className="bg-white border rounded-[2rem] p-4 cursor-pointer hover:shadow-2xl hover:border-orange-200 transition-all group animate-fade relative overflow-hidden">
-                                            <div className="slide-aspect bg-slate-50 rounded-2xl mb-4 flex items-center justify-center text-slate-200 group-hover:text-orange-200 transition-colors relative overflow-hidden">
-                                                <Icon name="presentation" size={48} />
-                                                <div className="absolute inset-0 bg-orange-600/0 group-hover:bg-orange-600/5 transition-colors" />
-                                            </div>
-                                            <div className="px-2 pb-2 flex justify-between items-start">
-                                                <div>
-                                                    <h3 className="font-extrabold text-slate-800 truncate text-lg leading-tight">{p.title || 'Untitled'}</h3>
-                                                    <p className="text-[10px] text-slate-400 font-bold uppercase mt-1 tracking-widest">{p.slides?.length || 0} Slides</p>
-                                                </div>
-                                                <button 
-                                                    onClick={(e) => { e.stopPropagation(); deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'presentations', p.id)); }} 
-                                                    className="opacity-0 group-hover:opacity-100 p-2 hover:bg-red-50 text-slate-300 hover:text-red-500 rounded-xl transition-all"
-                                                >
-                                                    <Icon name="trash-2" size={18} />
-                                                </button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </main>
-                    </div>
+                            ))}
+                        </div>
+                    </main>
                 </div>
             );
         };
