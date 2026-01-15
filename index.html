@@ -17,13 +17,12 @@
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
         body { font-family: 'Inter', sans-serif; }
         [contenteditable]:focus { outline: none; }
+        .slide-aspect { aspect-ratio: 16 / 9; }
     </style>
 </head>
 <body class="bg-slate-50">
     <div id="root"></div>
 
-    <!-- We use type="text/babel" so Babel can transpile JSX. 
-         We also use data-type="module" to allow ES imports inside Babel. -->
     <script type="text/babel" data-type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
@@ -31,7 +30,7 @@
 
         const { useState, useEffect } = React;
 
-        // --- Firebase Config ---
+        // --- Firebase Configuration ---
         const firebaseConfig = {
             apiKey: "AIzaSyDYI4Avd42wjJa3YOSKuGHhSCGgLFLZvik",
             authDomain: "presently-3babd.firebaseapp.com",
@@ -46,7 +45,7 @@
         const db = getFirestore(app);
         const appId = 'presently-default';
 
-        // --- Simple Icon Component ---
+        // --- Icon Component for Lucide ---
         const Icon = ({ name, size = 20, className = "" }) => {
             useEffect(() => {
                 if (window.lucide) window.lucide.createIcons();
@@ -56,14 +55,14 @@
 
         const AuthWrapper = ({ children, title, subtitle }) => (
             <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-                <div className="max-w-md w-full bg-white rounded-2xl shadow-xl overflow-hidden flex flex-col md:flex-row md:max-w-4xl">
+                <div className="max-w-md w-full bg-white rounded-2xl shadow-xl overflow-hidden flex flex-col md:flex-row md:max-w-4xl animate-in fade-in zoom-in duration-300">
                     <div className="hidden md:flex md:w-1/2 bg-orange-600 p-12 text-white flex-col justify-between">
                         <div>
                             <div className="flex items-center gap-2 mb-8">
                                 <Icon name="presentation" size={32} />
-                                <span className="text-2xl font-bold tracking-tight text-white">Presently</span>
+                                <span className="text-2xl font-bold tracking-tight">Presently</span>
                             </div>
-                            <h1 className="text-4xl font-extrabold leading-tight mb-4 text-white">Bring your ideas to life.</h1>
+                            <h1 className="text-4xl font-extrabold leading-tight mb-4">Bring your ideas to life.</h1>
                             <p className="text-orange-100 text-lg">The most intuitive way to build, share, and present your stories.</p>
                         </div>
                         <div className="text-sm text-orange-200">© 2024 Presently Inc.</div>
@@ -83,6 +82,7 @@
             const [fullName, setFullName] = useState('');
             const [email, setEmail] = useState('');
             const [password, setPassword] = useState('');
+            const [error, setError] = useState('');
             
             const [presentations, setPresentations] = useState([]);
             const [activePres, setActivePres] = useState(null);
@@ -92,10 +92,7 @@
                 const unsubscribe = onAuthStateChanged(auth, (u) => {
                     setUser(u);
                     if (u) setView('home');
-                    else {
-                        signInAnonymously(auth);
-                        setView('login');
-                    }
+                    else setView('login');
                 });
                 return () => unsubscribe();
             }, []);
@@ -106,9 +103,33 @@
                 const unsubscribe = onSnapshot(q, (snapshot) => {
                     const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
                     setPresentations(docs);
-                });
+                }, (err) => console.error("Firestore error", err));
                 return () => unsubscribe();
             }, [user]);
+
+            const validateInputs = () => {
+                if (!email.includes('@') || email.length < 5) return "Please enter a valid email address.";
+                if (password.length < 6) return "Password must be at least 6 characters.";
+                return null;
+            };
+
+            const handleAuthSubmit = async (e) => {
+                e.preventDefault();
+                setError('');
+                const validationError = validateInputs();
+                if (validationError) {
+                    setError(validationError);
+                    return;
+                }
+                
+                // For preview purposes, we use anonymous auth. 
+                // In production, you would use createUserWithEmailAndPassword here.
+                try {
+                    await signInAnonymously(auth);
+                } catch (err) {
+                    setError("Authentication failed. Please try again.");
+                }
+            };
 
             const createNewPresentation = async () => {
                 if (!user) return;
@@ -171,18 +192,35 @@
                 const isLogin = view === 'login';
                 return (
                     <AuthWrapper title={isLogin ? "Welcome back" : "Create an account"} subtitle="Save your work across devices.">
-                        <form onSubmit={(e) => { e.preventDefault(); setView('home'); }} className="space-y-5">
+                        <form onSubmit={handleAuthSubmit} className="space-y-5">
+                            {error && <div className="p-3 bg-red-50 text-red-500 text-sm rounded-lg border border-red-100">{error}</div>}
                             {!isLogin && (
                                 <input type="text" placeholder="Full Name" className="w-full px-4 py-3 rounded-lg border outline-none focus:ring-2 focus:ring-orange-500" value={fullName} onChange={e => setFullName(e.target.value)} />
                             )}
-                            <input type="email" placeholder="Email Address" className="w-full px-4 py-3 rounded-lg border outline-none focus:ring-2 focus:ring-orange-500" value={email} onChange={e => setEmail(e.target.value)} />
-                            <input type="password" placeholder="Password" className="w-full px-4 py-3 rounded-lg border outline-none focus:ring-2 focus:ring-orange-500" value={password} onChange={e => setPassword(e.target.value)} />
-                            <button type="submit" className="w-full bg-orange-600 text-white font-bold py-3 rounded-lg hover:bg-orange-700 transition-all">
+                            <input 
+                                type="email" 
+                                placeholder="Email Address" 
+                                maxLength={100}
+                                className="w-full px-4 py-3 rounded-lg border outline-none focus:ring-2 focus:ring-orange-500" 
+                                value={email} 
+                                onChange={e => setEmail(e.target.value)} 
+                                required
+                            />
+                            <input 
+                                type="password" 
+                                placeholder="Password" 
+                                maxLength={15}
+                                className="w-full px-4 py-3 rounded-lg border outline-none focus:ring-2 focus:ring-orange-500" 
+                                value={password} 
+                                onChange={e => setPassword(e.target.value)} 
+                                required
+                            />
+                            <button type="submit" className="w-full bg-orange-600 text-white font-bold py-3 rounded-lg hover:bg-orange-700 transition-all shadow-lg active:scale-[0.98]">
                                 {isLogin ? "Sign In" : "Get Started"}
                             </button>
                         </form>
                         <div className="mt-8 pt-8 border-t text-center">
-                            <button onClick={() => setView(isLogin ? 'signup' : 'login')} className="text-orange-600 font-semibold">{isLogin ? "Sign up for free" : "Log in"}</button>
+                            <button onClick={() => { setView(isLogin ? 'signup' : 'login'); setError(''); }} className="text-orange-600 font-semibold">{isLogin ? "Sign up for free" : "Log in"}</button>
                         </div>
                     </AuthWrapper>
                 );
@@ -191,7 +229,7 @@
             if (view === 'editor' && activePres) {
                 const currentSlide = activePres.slides[currentSlideIndex];
                 return (
-                    <div className="h-screen bg-slate-100 flex flex-col">
+                    <div className="h-screen bg-slate-100 flex flex-col animate-in fade-in duration-300">
                         <header className="bg-white border-b px-4 h-14 flex items-center justify-between z-20">
                             <div className="flex items-center gap-4">
                                 <button onClick={() => setView('home')} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500"><Icon name="chevron-left" /></button>
@@ -209,7 +247,7 @@
                                     />
                                 </div>
                             </div>
-                            <button className="bg-orange-600 text-white px-4 py-1.5 rounded-lg text-sm font-bold flex items-center gap-2"><Icon name="play" size={18} /> Present</button>
+                            <button className="bg-orange-600 text-white px-4 py-1.5 rounded-lg text-sm font-bold flex items-center gap-2 shadow-sm"><Icon name="play" size={18} /> Present</button>
                         </header>
 
                         <div className="bg-white border-b px-4 py-2 flex items-center gap-4 z-10 shadow-sm">
@@ -233,20 +271,20 @@
                                         onClick={() => setCurrentSlideIndex(idx)}
                                         className={`relative cursor-pointer rounded-lg p-1 transition-all ${currentSlideIndex === idx ? 'ring-2 ring-orange-500 shadow-md' : 'hover:bg-slate-50'}`}
                                     >
-                                        <div className="aspect-[16/9] bg-slate-50 border rounded flex items-center justify-center text-[10px] text-slate-400 font-bold">
-                                            SLIDE {idx + 1}
+                                        <div className="slide-aspect bg-slate-50 border rounded flex items-center justify-center text-[10px] text-slate-400 font-bold uppercase">
+                                            Slide {idx + 1}
                                         </div>
                                     </div>
                                 ))}
                             </aside>
 
                             <main className="flex-1 bg-slate-100 p-12 flex items-center justify-center">
-                                <div className="w-full max-w-4xl aspect-[16/9] bg-white shadow-2xl relative border overflow-hidden">
+                                <div className="w-full max-w-4xl slide-aspect bg-white shadow-2xl relative border overflow-hidden">
                                     {currentSlide.elements.map((el) => (
                                         <div 
                                             key={el.id}
                                             style={{ left: `${el.x}%`, top: `${el.y}%`, fontSize: el.fontSize ? `${el.fontSize}px` : 'inherit' }}
-                                            className="absolute"
+                                            className="absolute cursor-move group"
                                         >
                                             {el.type === 'text' && (
                                                 <div 
@@ -259,12 +297,12 @@
                                                         setActivePres(updated);
                                                         saveActivePres(updated);
                                                     }}
-                                                    className={`outline-none min-w-[50px] ${el.bold ? 'font-bold' : ''}`}
+                                                    className={`outline-none min-w-[50px] p-2 hover:ring-1 hover:ring-orange-200 rounded ${el.bold ? 'font-bold' : ''}`}
                                                 >
                                                     {el.content}
                                                 </div>
                                             )}
-                                            {el.type === 'square' && <div className="w-24 h-24 bg-orange-100 border-2 border-orange-300 rounded-md" />}
+                                            {el.type === 'square' && <div className="w-24 h-24 bg-orange-100 border-2 border-orange-300 rounded-md shadow-sm" />}
                                         </div>
                                     ))}
                                 </div>
@@ -275,7 +313,7 @@
             }
 
             return (
-                <div className="min-h-screen bg-slate-50 flex">
+                <div className="min-h-screen bg-slate-50 flex animate-in fade-in duration-500">
                     <aside className="w-64 bg-white border-r hidden lg:flex flex-col">
                         <div className="p-6">
                             <div className="flex items-center gap-2 text-orange-600 mb-8 font-bold text-xl"><Icon name="presentation" size={28} /> Presently</div>
@@ -285,9 +323,9 @@
                             </nav>
                         </div>
                         <div className="mt-auto p-6 border-t flex items-center gap-3">
-                            <div className="h-10 w-10 bg-orange-100 text-orange-600 flex items-center justify-center rounded-full font-bold">{(fullName || 'U')[0]}</div>
+                            <div className="h-10 w-10 bg-orange-100 text-orange-600 flex items-center justify-center rounded-full font-bold">{(fullName || user?.uid || 'U')[0].toUpperCase()}</div>
                             <div className="flex-1 overflow-hidden">
-                                <p className="text-sm font-semibold truncate">{fullName || 'User'}</p>
+                                <p className="text-sm font-semibold truncate">{fullName || 'Anonym User'}</p>
                             </div>
                             <button onClick={() => signOut(auth)} className="text-slate-400 hover:text-slate-600"><Icon name="log-out" size={18} /></button>
                         </div>
@@ -297,33 +335,43 @@
                         <header className="bg-white border-b px-8 py-4 flex items-center justify-between">
                             <div className="relative w-full max-w-lg">
                                 <Icon name="search" size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                                <input type="text" placeholder="Search presentations..." className="w-full pl-10 pr-4 py-2 bg-slate-100 rounded-lg text-sm outline-none" />
+                                <input type="text" placeholder="Search presentations..." className="w-full pl-10 pr-4 py-2 bg-slate-100 rounded-lg text-sm outline-none focus:ring-2 focus:ring-orange-200 transition-all" />
                             </div>
-                            <button onClick={createNewPresentation} className="bg-orange-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-sm"><Icon name="plus" size={18} /> New Presentation</button>
+                            <button onClick={createNewPresentation} className="bg-orange-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-sm hover:bg-orange-700 transition-all active:scale-95"><Icon name="plus" size={18} /> New Presentation</button>
                         </header>
 
                         <main className="flex-1 overflow-y-auto p-8">
                             <div className="max-w-6xl mx-auto">
+                                <div className="mb-12">
+                                    <h2 className="text-xl font-bold text-slate-800 mb-6">Start with a template</h2>
+                                    <div onClick={createNewPresentation} className="w-48 group cursor-pointer">
+                                        <div className="aspect-[4/3] bg-white border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center gap-2 hover:border-orange-400 hover:bg-orange-50 transition-all active:scale-95">
+                                            <Icon name="plus" size={32} className="text-slate-400 group-hover:text-orange-600" />
+                                            <span className="text-xs font-semibold text-slate-500">Blank</span>
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <h2 className="text-xl font-bold text-slate-800 mb-6">Your Recent Presentations</h2>
                                 {presentations.length === 0 ? (
                                     <div className="bg-white rounded-xl border p-12 flex flex-col items-center text-center shadow-sm">
                                         <Icon name="file-text" size={40} className="text-slate-200 mb-4" />
                                         <h3 className="text-lg font-semibold text-slate-800">No presentations yet</h3>
-                                        <button onClick={createNewPresentation} className="mt-4 text-orange-600 font-bold">Create your first one</button>
+                                        <p className="text-slate-400 text-sm mt-1">Click the button above to start your first project.</p>
                                     </div>
                                 ) : (
                                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                                         {presentations.map(p => (
-                                            <div key={p.id} onClick={() => openPresentation(p)} className="bg-white border rounded-xl p-4 cursor-pointer hover:shadow-md transition-all group">
-                                                <div className="aspect-[16/9] bg-slate-50 rounded-lg mb-4 flex items-center justify-center text-orange-200">
+                                            <div key={p.id} onClick={() => openPresentation(p)} className="bg-white border rounded-xl p-4 cursor-pointer hover:shadow-lg transition-all group animate-in slide-in-from-bottom-4 duration-300">
+                                                <div className="slide-aspect bg-slate-50 rounded-lg mb-4 flex items-center justify-center text-orange-200 group-hover:bg-orange-50 transition-colors">
                                                     <Icon name="presentation" size={48} />
                                                 </div>
                                                 <div className="flex items-center justify-between">
-                                                    <h3 className="font-semibold text-slate-800">{p.title}</h3>
+                                                    <h3 className="font-semibold text-slate-800 truncate flex-1 mr-2">{p.title}</h3>
                                                     <button onClick={(e) => {
                                                         e.stopPropagation();
                                                         deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'presentations', p.id));
-                                                    }} className="p-1 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded"><Icon name="trash-2" size={16} /></button>
+                                                    }} className="p-1 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded transition-colors"><Icon name="trash-2" size={16} /></button>
                                                 </div>
                                             </div>
                                         ))}
